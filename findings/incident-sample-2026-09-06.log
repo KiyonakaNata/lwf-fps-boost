@@ -1,0 +1,63 @@
+# メモ: 以下は 2026-09-06 00:59 にタイトル画面で回した A/B（FullAB=true）の B フェーズ（エラー回避処理なし）で出た記録。
+# 実プレイの事故ではなく、高負荷テストの締め（一斉解除）で狙って出したもの。事故記録（IncidentLog）の書式の実例として残す。
+# 当時のビルドにはヘッダの test= 欄が無い（c3504e5 で追加）。以後の記録には test=load test B (guard off) のように入る。
+
+==== 2026-09-06 00:59:10.602  Exception  ArgumentOutOfRangeException: Index was out of range. Must be non-negative and less than the size of the collection.
+game=0.27.0  mod=2.1.0  threads=16  scene=Title  threading=on  guard=off
+guard: lateUpdate waits=11 giveups=0  update waits=9 giveups=0  registered mesh=0 anim=0
+-- context (oldest first)
+2026-09-06 00:58:47.698 upstream: Internal threading logic error: exited LateUpdate loop after timeout!
+2026-09-06 00:58:48.708 stress: anim stall armed (13 targets)
+2026-09-06 00:58:49.714 upstream: Waiting for updateDone on main thread ran into a timeout (task index: 113)!
+2026-09-06 00:58:49.714 upstream: Internal threading logic error: skeletonAnimations never called UpdateInternal before!
+2026-09-06 00:58:49.714 upstream: Internal threading logic error: skeletonAnimations never called UpdateInternal before!
+2026-09-06 00:58:49.714 upstream: Internal threading logic error: skeletonAnimations never called UpdateInternal before!
+2026-09-06 00:58:49.714 upstream: Internal threading logic error: skeletonAnimations never called UpdateInternal before!
+2026-09-06 00:58:49.714 upstream: Internal threading logic error: skeletonAnimations never called UpdateInternal before!
+2026-09-06 00:58:50.959 stress: mesh stall armed
+2026-09-06 00:58:51.966 upstream: Internal threading logic error: exited LateUpdate loop after timeout!
+2026-09-06 00:58:52.975 stress: anim stall armed (13 targets)
+2026-09-06 00:58:53.980 upstream: Waiting for updateDone on main thread ran into a timeout (task index: 113)!
+2026-09-06 00:58:53.980 upstream: Internal threading logic error: skeletonAnimations never called UpdateInternal before!
+2026-09-06 00:58:55.259 stress: mesh stall armed
+2026-09-06 00:58:56.266 upstream: Internal threading logic error: exited LateUpdate loop after timeout!
+2026-09-06 00:58:57.275 stress: anim stall armed (13 targets)
+2026-09-06 00:58:58.279 upstream: Waiting for updateDone on main thread ran into a timeout (task index: 112)!
+2026-09-06 00:58:58.279 upstream: Internal threading logic error: skeletonAnimations never called UpdateInternal before!
+2026-09-06 00:58:58.279 upstream: Internal threading logic error: skeletonAnimations never called UpdateInternal before!
+2026-09-06 00:58:59.542 stress: mesh stall armed
+2026-09-06 00:59:00.549 upstream: Internal threading logic error: exited LateUpdate loop after timeout!
+2026-09-06 00:59:01.561 stress: anim stall armed (13 targets)
+2026-09-06 00:59:02.566 upstream: Waiting for updateDone on main thread ran into a timeout (task index: 112)!
+2026-09-06 00:59:02.566 upstream: Internal threading logic error: skeletonAnimations never called UpdateInternal before!
+2026-09-06 00:59:02.566 upstream: Internal threading logic error: skeletonAnimations never called UpdateInternal before!
+2026-09-06 00:59:02.566 upstream: Internal threading logic error: skeletonAnimations never called UpdateInternal before!
+2026-09-06 00:59:02.566 upstream: Internal threading logic error: skeletonAnimations never called UpdateInternal before!
+2026-09-06 00:59:03.825 stress: mesh stall armed
+2026-09-06 00:59:04.833 upstream: Internal threading logic error: exited LateUpdate loop after timeout!
+2026-09-06 00:59:05.825 stress: anim stall armed (13 targets)
+2026-09-06 00:59:06.828 upstream: Waiting for updateDone on main thread ran into a timeout (task index: 113)!
+2026-09-06 00:59:06.828 upstream: Internal threading logic error: skeletonAnimations never called UpdateInternal before!
+2026-09-06 00:59:06.828 upstream: Internal threading logic error: skeletonAnimations never called UpdateInternal before!
+2026-09-06 00:59:06.828 upstream: Internal threading logic error: skeletonAnimations never called UpdateInternal before!
+2026-09-06 00:59:06.828 upstream: Internal threading logic error: skeletonAnimations never called UpdateInternal before!
+2026-09-06 00:59:08.075 stress: mesh stall armed
+2026-09-06 00:59:09.087 upstream: Internal threading logic error: exited LateUpdate loop after timeout!
+2026-09-06 00:59:09.394 stress: mesh stall armed
+2026-09-06 00:59:10.399 upstream: Internal threading logic error: exited LateUpdate loop after timeout!
+2026-09-06 00:59:10.423 test: finale, mass unregister (fired=True)
+-- message
+ArgumentOutOfRangeException: Index was out of range. Must be non-negative and less than the size of the collection.
+Parameter name: index
+-- stack
+System.Collections.Generic.List`1[T].get_Item (System.Int32 index) (at <4449e9424e7e4d4d81a660907c68cb97>:0)
+Spine.Unity.SkeletonUpdateSystem.LateUpdateSkeletonsAsyncImpl (Spine.Unity.SkeletonUpdateSystem+SkeletonUpdateRange range, System.Int32 threadIndex) (at <14d23a37f8594d19ba0d0d75b787b083>:0)
+LockFreeWorkStealingWorkerPool`1[T].WorkerLoop (System.Int32 threadIndex) (at <14d23a37f8594d19ba0d0d75b787b083>:0)
+LockFreeWorkStealingWorkerPool`1+<>c__DisplayClass6_0[T].<.ctor>b__0 () (at <14d23a37f8594d19ba0d0d75b787b083>:0)
+System.Threading.ThreadHelper.ThreadStart_Context (System.Object state) (at <4449e9424e7e4d4d81a660907c68cb97>:0)
+System.Threading.ExecutionContext.RunInternal (System.Threading.ExecutionContext executionContext, System.Threading.ContextCallback callback, System.Object state, System.Boolean preserveSyncCtx) (at <4449e9424e7e4d4d81a660907c68cb97>:0)
+System.Threading.ExecutionContext.Run (System.Threading.ExecutionContext executionContext, System.Threading.ContextCallback callback, System.Object state, System.Boolean preserveSyncCtx) (at <4449e9424e7e4d4d81a660907c68cb97>:0)
+System.Threading.ExecutionContext.Run (System.Threading.ExecutionContext executionContext, System.Threading.ContextCallback callback, System.Object state) (at <4449e9424e7e4d4d81a660907c68cb97>:0)
+System.Threading.ThreadHelper.ThreadStart () (at <4449e9424e7e4d4d81a660907c68cb97>:0)
+UnityEngine.<>c:<RegisterUECatcher>b__0_0(Object, UnhandledExceptionEventArgs)
+

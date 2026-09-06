@@ -1,0 +1,12 @@
+# メモ: GameReport（1 回の工場ごとの記録）の実例。2026-09-06 の実プレイ 1 回（特別任務・30.7 分・103 体）。
+# 見捨ては 0 回、例外 0。終了理由と run の ID は本体の RunHistory から取れている。
+
+==== game 2026-09-06 09:02:02 -> 09:32:43  (30.7 min)  end=DefeatTimeUp  mode=SpecialMission  run=10bb07e0-94d5-4392-9970-97694cfcea94
+game=0.27.0  mod=2.1.0  unity=6000.0.80f1
+os="Windows 11  (10.0.26200)"  cpu="AMD Ryzen 7 5700X 8-Core Processor"  threads=16  ram=63 GB  gpu="NVIDIA GeForce RTX 5090"
+threading=on  guard=on  threading_off_time=0 s
+frames=110118  avg=16.7 ms  max=200 ms  over33ms=178 (0.2%)  over100ms=4
+skeletons_max: mesh=103 anim=103
+guard: lateUpdate waits=0 (total 0 ms)  update waits=0 (total 0 ms)  giveups=0
+errors: upstream_timeouts=0  incidents=0 (out_of_range=0, null=0)  unity_errors=0  spine_errors=0
+
