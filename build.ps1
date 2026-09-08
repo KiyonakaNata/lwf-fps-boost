@@ -34,7 +34,8 @@ $sources = @(
     (Join-Path $here 'IncidentLog.cs'),         # 事故の記録（BepInEx/LwfFpsBoost-incidents.log に追記）
     (Join-Path $here 'GameReport.cs'),          # 1 回の工場ごとの記録（BepInEx/LwfFpsBoost-games.log に追記）
     (Join-Path $here 'StressTools.cs'),         # 負荷テスト churn / stall / hog（検証用）
-    (Join-Path $here 'BuiltinSkeleton.cs')      # タイトル画面用の埋め込み最小スケルトン
+    (Join-Path $here 'BuiltinSkeleton.cs'),     # タイトル画面用の埋め込み最小スケルトン
+    (Join-Path $here 'Lang.cs')                 # 画面に出す文字の日英（ゲームの設定言語に追従）
 )
 
 foreach ($p in @($Csc, $Managed, $Core) + $sources) {

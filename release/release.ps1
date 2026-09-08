@@ -6,7 +6,9 @@
 # 配布用に機能を削った別ビルドは作らない——手元で動いている物と配った物が
 # 別になると、不具合の報告が来たときに再現できなくなるため。
 #
-# まずは Discord 内で配る（Thunderstore・GitHub は後で）。zip は 1 つで、渡せば完結する中身にする:
+# zip は 2 つ作る。手で入れる人向けと、MOD管理ソフト（Thunderstore）向け。
+#
+# 手で入れる人向けは、渡せば完結する中身にする:
 #   LwfFpsBoost.dll
 #   README.txt      （zip-README.txt を改名したもの。入れかた・キー・報告に使うファイル）
 #   DEVELOPER.md    （ゲーム作者向けの説明。仕組み・再現・本体側の修正案）
@@ -67,9 +69,34 @@ Remove-Item $stage -Recurse -Force
 $size = [math]::Round((Get-Item $zip).Length / 1KB, 1)
 Write-Host "OK: $zip ($size KB)"
 
+# ---- Thunderstore 用 ----
+#   manifest.json / icon.png / README.md   ← thunderstore\ の中身
+#   BepInEx/plugins/LwfFpsBoost.dll
+# 版は manifest.json にも書く。ソースと食い違ったまま出すと上書きできないので、ここで止める
+$tsDir = Join-Path $here 'thunderstore'
+$manifest = Join-Path $tsDir 'manifest.json'
+$tsVersion = (Select-String -Path $manifest -Pattern '"version_number"\s*:\s*"([^"]+)"').Matches[0].Groups[1].Value
+if ($tsVersion -ne $version) { throw "manifest.json の版が違います: $tsVersion (ソースは $version)" }
+
+$tsStage = Join-Path $outDir 'stage-thunderstore'
+if (Test-Path $tsStage) { Remove-Item $tsStage -Recurse -Force }
+New-Item -ItemType Directory -Path (Join-Path $tsStage 'BepInEx\plugins') -Force | Out-Null
+Copy-Item $dll -Destination (Join-Path $tsStage 'BepInEx\plugins') -Force
+foreach ($f in @('manifest.json', 'icon.png', 'README.md')) {
+    Copy-Item (Join-Path $tsDir $f) -Destination $tsStage -Force
+}
+
+$tsZip = Join-Path $outDir "LwfFpsBoost-thunderstore-$version.zip"
+if (Test-Path $tsZip) { Remove-Item $tsZip -Force }
+[System.IO.Compression.ZipFile]::CreateFromDirectory($tsStage, $tsZip)
+Remove-Item $tsStage -Recurse -Force
+
+$tsSize = [math]::Round((Get-Item $tsZip).Length / 1KB, 1)
+Write-Host "OK: $tsZip ($tsSize KB)"
+
 Write-Host ""
 Add-Type -AssemblyName System.IO.Compression
-foreach ($z in @($zip)) {
+foreach ($z in @($zip, $tsZip)) {
     Write-Host "$(Split-Path $z -Leaf) の中身:"
     $archive = [System.IO.Compression.ZipFile]::OpenRead($z)
     foreach ($entry in $archive.Entries) { Write-Host "  $($entry.FullName)" }

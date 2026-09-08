@@ -2,7 +2,7 @@
 #
 #   powershell -ExecutionPolicy Bypass -File release\publish-tree.ps1 [-Dest D:\Wiki\lwf-fps-boost]
 #
-# 出すもの:  ソース 7 本・build.ps1、release\ の README.md（配布用）・DEVELOPER.md（作者向け）・img\・release.ps1・zip-README.txt
+# 出すもの:  ソース 8 本・build.ps1、release\ の README.md（配布用）・DEVELOPER.md（作者向け）・img\（en\ 含む）・release.ps1・zip-README.txt・thunderstore\
 #            findings\ のうち自分で書いた md と記録の実例
 # 出さないもの:
 #   - findings\LateUpdateWaitPath-port-*.cs         … 上流コードの移植（Spine Runtimes License 上、配れない）
@@ -34,7 +34,7 @@ function CopyTo($src, $rel) {
 }
 
 # ソースとビルド
-foreach ($f in @('SpineThreadingMod.cs','LateUpdateGuard.cs','UpdateGuard.cs','IncidentLog.cs','GameReport.cs','StressTools.cs','BuiltinSkeleton.cs','build.ps1')) {
+foreach ($f in @('SpineThreadingMod.cs','LateUpdateGuard.cs','UpdateGuard.cs','IncidentLog.cs','GameReport.cs','StressTools.cs','BuiltinSkeleton.cs','Lang.cs','build.ps1')) {
     CopyTo (Join-Path $mod $f) $f
 }
 # 文書
@@ -58,6 +58,11 @@ if (Test-Path (Join-Path $here 'img')) { if (-not (Test-Path (Join-Path $Dest 'i
 foreach ($f in @('release.ps1','zip-README.txt','publish-tree.ps1')) {
     $src = Join-Path $here $f
     if (Test-Path $src) { CopyTo $src "release\$f" }
+}
+# Thunderstore 一式（manifest・icon・README）
+foreach ($f in @('manifest.json','icon.png','README.md')) {
+    $src = Join-Path $here "thunderstore\$f"
+    if (Test-Path $src) { CopyTo $src "release\thunderstore\$f" }
 }
 
 # 出してはいけないものが混ざっていないか

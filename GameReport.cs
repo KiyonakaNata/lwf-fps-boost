@@ -320,7 +320,8 @@ namespace LwfFpsBoost
             sb.AppendLine("guard: lateUpdate waits=" + lateWaits + " (total " + lateMs + " ms)  update waits=" + updWaits + " (total " + updMs + " ms)  giveups=" + giveups);
             sb.AppendLine("errors: upstream_timeouts=" + (_logic - r.base_logic) + "  incidents=" + (IncidentLog.Count - r.base_incidents)
                 + " (out_of_range=" + (_index - r.base_index) + ", null=" + (_null - r.base_null) + ")"
-                + "  unity_errors=" + (_unity - r.base_unity) + "  spine_errors=" + (_spine - r.base_spine));
+                + "  unity_errors=" + (_unity - r.base_unity) + "  spine_errors=" + (_spine - r.base_spine)
+                + (IncidentLog.Suppressed > 0 ? "  repeated=" + IncidentLog.Suppressed + " (counted only)" : ""));
             if (r.events.Count > 0)
             {
                 sb.AppendLine("events:");

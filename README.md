@@ -18,6 +18,8 @@
 3. `LwfFpsBoost.dll` を `BepInEx/plugins/` に置く
 4. ゲームを起動する。タイトル画面の左上に案内が出れば動いている
 
+MOD管理ソフトを使うなら [Thunderstore](https://thunderstore.io/c/lazy-witchs-factory/p/KiyonakaNata/LwfFpsBoost/) から
+
 ![タイトル画面の案内](img/title-panel.png)
 
 ## 使い方
@@ -82,6 +84,7 @@
 ## 注意
 
 - 非公式の Mod。ゲーム本体の更新で動かなくなることがある。動かなくなったら外す
+- 本体がマルチスレッド化を入れたら、この Mod は何も掛けずに止まる。タイトル画面に「本体が対応済み。この MOD は不要」と出たら外す
 - 不具合をゲーム作者に報告するときは、この Mod を外して再現確認する
 - 素に戻す: `BepInEx/plugins/LwfFpsBoost.dll` を削除。BepInEx ごと消すなら、ゲームフォルダの `BepInEx\` `winhttp.dll` `doorstop_config.ini` `.doorstop_version` `changelog.txt` を削除（Steam の「ファイルの整合性を確認」でも可）
 

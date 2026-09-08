@@ -33,8 +33,16 @@ namespace LwfFpsBoost
         private const int ContextLines = 40;
         private const long RotateBytes = 2L * 1024 * 1024;
 
-        /// <summary>このセッションで記録した件数（HUD 用）。</summary>
+        // 同じ事故が毎フレーム出ることがある（保護が外れたまま走ると 1 秒に 20 件以上）。
+        // 1 件ごとに文脈 40 行を書くので、間引かないと数分でファイルが数 MB になり、
+        // 書き込みそのものが重さの主因になる。中身は同じなので、詳しく残すのは最初の数件でよい。
+        private const int SameMessageReports = 3;
+        private const int SessionReports = 200;
+
+        /// <summary>このセッションで起きた件数（HUD 用。間引いた分も数える）。</summary>
         internal static int Count;
+        /// <summary>そのうち、詳しく書かずに数だけ数えた件数。</summary>
+        internal static int Suppressed;
         /// <summary>このセッションの最初の 1 件の要約（HUD 用）。</summary>
         internal static volatile string First = "";
 
@@ -47,6 +55,11 @@ namespace LwfFpsBoost
 
         private static readonly object Lock = new object();
         private static readonly Queue<string> Context = new Queue<string>(ContextLines + 1);
+        /// <summary>同じ内容を何件書いたか。件名ごと</summary>
+        private static readonly Dictionary<string, int> Written = new Dictionary<string, int>();
+        /// <summary>上流の警告を何件積んだか。件名ごと</summary>
+        private static readonly Dictionary<string, int> NotedUpstream = new Dictionary<string, int>();
+        private static int _writtenTotal;
         private static ManualLogSource _log;
         private static string _path = "";
         private static string _gameVersion = "";
@@ -92,7 +105,16 @@ namespace LwfFpsBoost
                 || c.IndexOf("ran into a timeout", StringComparison.Ordinal) >= 0;
             if (upstreamTimeout)
             {
-                Note("upstream: " + FirstLine(c));
+                // これも毎フレーム出ることがある。時刻を作って行を積むだけでも、
+                // 秒あたり数十回なら無駄が積もるので、同じ内容は数件で止める
+                string line = FirstLine(c);
+                int noted;
+                lock (Lock)
+                {
+                    NotedUpstream.TryGetValue(line, out noted);
+                    NotedUpstream[line] = noted + 1;
+                }
+                if (noted < SameMessageReports) { Note("upstream: " + line); }
                 return;
             }
             bool spine = c.IndexOf("Spine", StringComparison.Ordinal) >= 0 || s.IndexOf("Spine.", StringComparison.Ordinal) >= 0
@@ -104,6 +126,34 @@ namespace LwfFpsBoost
         private static void Record(string kind, string condition, string stackTrace)
         {
             string first = FirstLine(condition);
+
+            // 書くかどうかを先に決める。数えるのは全件、書くのは最初の数件だけ
+            bool write;
+            bool lastOfKind;
+            lock (Lock)
+            {
+                Count++;
+                if (First.Length == 0) { First = first; }
+                int seen;
+                Written.TryGetValue(first, out seen);
+                write = seen < SameMessageReports && _writtenTotal < SessionReports;
+                lastOfKind = write && seen == SameMessageReports - 1;
+                if (write)
+                {
+                    Written[first] = seen + 1;
+                    _writtenTotal++;
+                }
+                else
+                {
+                    Suppressed++;
+                }
+            }
+            if (!write)
+            {
+                // 文脈にも積まない。同じ行で 40 行が埋まると、直前に何が起きたか分からなくなる
+                return;
+            }
+
             StringBuilder sb = new StringBuilder(2048);
             sb.AppendLine("==== " + Stamp() + "  " + kind + "  " + first);
             sb.AppendLine("game=" + _gameVersion + "  mod=" + _modVersion + "  threads=" + Environment.ProcessorCount
@@ -126,6 +176,13 @@ namespace LwfFpsBoost
             }
             sb.AppendLine();
 
+            if (lastOfKind)
+            {
+                sb.AppendLine("-- note");
+                sb.AppendLine("last full report for this message; further ones are counted only (see the totals at the end of the game)");
+                sb.AppendLine();
+            }
+
             lock (Lock)
             {
                 try
@@ -137,10 +194,12 @@ namespace LwfFpsBoost
                 {
                     if (_log != null) { _log.LogWarning("[incident] write failed: " + e.Message); }
                 }
-                Count++;
-                if (First.Length == 0) { First = first; }
             }
-            if (_log != null) { _log.LogError("[incident] " + kind + ": " + first + "  -> " + FileName); }
+            if (_log != null)
+            {
+                _log.LogError("[incident] " + kind + ": " + first + "  -> " + FileName
+                    + (lastOfKind ? "  (last full report for this message)" : ""));
+            }
             Note("incident: " + first);
         }
 

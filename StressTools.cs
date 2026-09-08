@@ -170,7 +170,7 @@ namespace LwfFpsBoost
         // ------------------------------------------------------------------
         internal string ToggleChurn()
         {
-            if (ChurnOn) { StopChurn(); return "churn: OFF   作成 " + Created + " / 破棄 " + Destroyed; }
+            if (ChurnOn) { StopChurn(); return "churn: OFF   created " + Created + " / destroyed " + Destroyed; }
 
             // 雛形は場面で一番アニメの多いスケルトン（電話や看板より使い魔を選ばせる）。一度きりなので探索コストは許容
             SkeletonAnimation template = null;
@@ -191,7 +191,7 @@ namespace LwfFpsBoost
                 _asset = BuiltinSkeleton.Get(_log);
                 if (_asset == null)
                 {
-                    return "churn: 実行不可   スケルトンを用意できない";
+                    return "churn: cannot run   no skeleton available";
                 }
                 _templateRenderer = null;
                 _templateScale = Vector3.one;
@@ -215,14 +215,14 @@ namespace LwfFpsBoost
             }
             if (_animNames.Count == 0)
             {
-                return "churn: 実行不可   " + _asset.name + " にアニメ無し";
+                return "churn: cannot run   " + _asset.name + " has no animation";
             }
 
             _root = new GameObject("LwfSpineStress");
             ChurnOn = true;
-            string src = _builtin ? "埋め込み" : _asset.name;
+            string src = _builtin ? "built-in" : _asset.name;
             _log.LogInfo("[stress] churn on: template=" + (_builtin ? "builtin" : _asset.name) + ", anims=" + _animNames.Count + ", alive=" + ChurnAlive + ", perFrame=" + ChurnPerFrame);
-            return "churn: ON   " + src + "   " + ChurnAlive + " 体   毎フレーム " + ChurnPerFrame;
+            return "churn: ON   " + src + "   alive " + ChurnAlive + "   per frame " + ChurnPerFrame;
         }
 
         internal void StopChurn()
@@ -242,13 +242,13 @@ namespace LwfFpsBoost
         // ------------------------------------------------------------------
         internal string ToggleStall()
         {
-            if (StallOn) { StopStall(); return "stall: OFF   発動 " + StallFired; }
+            if (StallOn) { StopStall(); return "stall: OFF   fired " + StallFired; }
             StallOn = true;
             _stallUntil = Time.unscaledTime + StallSeconds;
             _stallFrame = 0;
             StallArmed = 0;
             _log.LogInfo("[stress] stall on: every " + StallEveryFrames + " frames sleep one worker task " + StallMs + " ms, auto-off in " + StallSeconds + " s");
-            return "stall: ON   " + StallEveryFrames + " フレームごと " + StallMs + " ms   " + StallSeconds + " 秒で停止";
+            return "stall: ON   every " + StallEveryFrames + " frames " + StallMs + " ms   stops in " + StallSeconds + " s";
         }
 
         internal void StopStall()
@@ -507,7 +507,7 @@ namespace LwfFpsBoost
                 t.Start();
             }
             _log.LogInfo("[stress] hog on: threads=" + n + ", auto-off in " + HogSeconds + " s");
-            return "hog: ON   " + n + " threads   " + HogSeconds + " 秒で停止";
+            return "hog: ON   " + n + " threads   stops in " + HogSeconds + " s";
         }
 
         internal void StopHog()
@@ -537,13 +537,13 @@ namespace LwfFpsBoost
         internal string Status()
         {
             string churn = ChurnOn
-                ? "churn ON alive " + _alive.Count + " (作成 " + Created + " / 破棄 " + Destroyed + ")"
-                : "churn OFF" + (Created > 0 ? " (作成 " + Created + " / 破棄 " + Destroyed + ")" : "");
+                ? "churn ON alive " + _alive.Count + " (created " + Created + " / destroyed " + Destroyed + ")"
+                : "churn OFF" + (Created > 0 ? " (created " + Created + " / destroyed " + Destroyed + ")" : "");
             string stall = (StallOn ? "stall ON " : "stall OFF ")
-                + "発動 " + StallFired + "（anim " + AnimStallFired + "）  叩いて例外 " + HammerExceptions
-                + (StallOn ? "  残り " + Math.Max(0f, _stallUntil - Time.unscaledTime).ToString("0") + "s" : "");
+                + "fired " + StallFired + " (anim " + AnimStallFired + ")  hammer exceptions " + HammerExceptions
+                + (StallOn ? "  " + Math.Max(0f, _stallUntil - Time.unscaledTime).ToString("0") + "s left" : "");
             string hog = HogOn
-                ? "hog ON " + _hogCount + "本 残り " + Math.Max(0f, _hogUntil - Time.unscaledTime).ToString("0") + "s"
+                ? "hog ON " + _hogCount + " threads " + Math.Max(0f, _hogUntil - Time.unscaledTime).ToString("0") + "s left"
                 : "";
             return churn + "   " + stall + (hog.Length > 0 ? "   " + hog : "");
         }

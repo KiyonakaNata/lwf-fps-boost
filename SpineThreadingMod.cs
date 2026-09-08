@@ -145,8 +145,17 @@ namespace LwfFpsBoost
     public class SpineThreadingMod : BaseUnityPlugin
     {
         public const string PluginGuid = "kiyonakanata.lwffpsboost";
+
+        /// <summary>Harmony の ID。読み直し（ScriptEngine の F6）ごとに変える。
+        /// 固定にすると、破棄される古いインスタンスの UnpatchSelf() が、
+        /// 先に読み込まれた新しいインスタンスのパッチまで剥がしてしまう。
+        /// そうなるとスレッド化（Spine のグローバル設定なので生き残る）だけが残り、
+        /// 保護の待機パスが消えた状態で走り続けることになる。
+        /// 読み直すたびに別のアセンブリになるため静的な連番では 1 に戻って衝突するので、
+        /// 引き直しの値を使う。</summary>
+        private readonly string _harmonyID = PluginGuid + "." + Guid.NewGuid().ToString("N").Substring(0, 8);
         public const string PluginName = "LWF FPS Boost";
-        public const string PluginVersion = "2.1.0";
+        public const string PluginVersion = "2.1.1";
 
         private ConfigEntry<bool> _enabled;
         private ConfigEntry<bool> _threadedAnimation;
@@ -217,6 +226,7 @@ namespace LwfFpsBoost
         private bool _inGame;                 // InGame シーンにいる（表示とテストはタイトル側だけ）
         private string _abortNotice = "";     // テスト中に画面が移動して中止したときの告知（ゲーム内でも出し続ける）
         private bool _locked;                 // 中止後はこのセッションではテストを受け付けない（再起動を促す）
+        private bool _upstreamFixed;          // 本体が自分でマルチスレッドを有効にしている（この MOD は不要）
 
         private bool _subscribed;
         private bool _threadingOn;
@@ -291,6 +301,18 @@ namespace LwfFpsBoost
                 return;
             }
 
+            // 本体が自分でマルチスレッドを有効にしていれば、この MOD の仕事は終わっている。
+            // 何も当てずに、消してよいと伝えるだけにする
+            if (GameHasThreading())
+            {
+                _upstreamFixed = true;
+                Logger.LogInfo("[boot] the game already runs Spine threaded; this mod is not needed");
+                Logger.LogInfo("[boot] delete BepInEx/plugins/LwfFpsBoost.dll");
+                SceneManager.sceneLoaded += OnSceneLoaded;
+                _subscribed = true;
+                return;
+            }
+
             Application.logMessageReceivedThreaded += OnUnityLog;
             _logHooked = true;
             IncidentLog.Init(Logger, PluginVersion);
@@ -358,7 +380,7 @@ namespace LwfFpsBoost
             }
             try
             {
-                _harmony = new Harmony(PluginGuid);
+                _harmony = new Harmony(_harmonyID);
                 _harmony.PatchAll(typeof(LateUpdateGuard));
                 Logger.LogInfo("[guard] patched SkeletonUpdateSystem.LateUpdateAsync (Postfix). " + report);
                 string report2;
@@ -399,7 +421,7 @@ namespace LwfFpsBoost
         {
             if (!_waitPathPatched)
             {
-                Say("高負荷テスト: 実行不可   エラー回避処理: 無効（" + _waitPathReport + "）");
+                Say(Lang.T("高負荷テスト: 実行不可   エラー回避処理: 無効（", "Load test: cannot run   guard: off (") + _waitPathReport + Lang.T("）", ")"));
                 return;
             }
             _abSummary = "";
@@ -409,7 +431,7 @@ namespace LwfFpsBoost
             _abPhase = AbRunA;
             if (!_hudVisible) { _hudVisible = true; }   // 経過と結果が見えるように出す。消すのは F9
             if (_skeletonCount < 0) { RefreshSkeletonCount(); }
-            Say("高負荷テスト: 開始");
+            Say(Lang.T("高負荷テスト: 開始", "Load test: started"));
         }
 
         /// <summary>run フェーズに入る。churn と周期 stall を立て、カウンタの基準を取る。</summary>
@@ -505,7 +527,7 @@ namespace LwfFpsBoost
                         _abSummary = _abVerdictA + "\n                 " + _abResultA;
                         Logger.LogInfo("[test] load test: " + _abVerdictA);
                         GameReport.TestBlock("load test", _abVerdictA, _abResultA);
-                        Say("高負荷テスト: " + _abVerdictA);
+                        Say(Lang.T("高負荷テスト: ", "Load test: ") + _abVerdictA);
                         break;
                     }
                     _abPhase = AbRest; _abPhaseEnd = Time.unscaledTime + 5f;
@@ -523,12 +545,12 @@ namespace LwfFpsBoost
                         Logger.LogInfo("[test] " + b);
                         AbFinish("done");
                         int bNull = _nullErrorCount - _abBaseNull;
-                        _abVerdict = "あり: " + _abVerdictA + "   なし: out of range " + bIndex + "   null " + bNull;
+                        _abVerdict = Lang.T("あり: ", "guard on: ") + _abVerdictA + Lang.T("   なし: out of range ", "   guard off: out of range ") + bIndex + "   null " + bNull;
                         _abSummary = _abResultA + "\n                 " + b
                             + (_lastSpineError.Length > 0 ? "\n                 last Spine error: " + Truncate(_lastSpineError, 100) : "");
                         Logger.LogInfo("[test] A/B done. last Spine error: " + _lastSpineError);
                         GameReport.TestBlock("A/B", _abVerdict, _abResultA + "  |  " + b);
-                        Say("A/B: 完了");
+                        Say(Lang.T("A/B: 完了", "A/B: done"));
                     }
                     break;
             }
@@ -551,13 +573,13 @@ namespace LwfFpsBoost
             int spineOther = spine - logic;
             if (index > 0 || nul > 0 || spineOther > 0 || giveup > 0)
             {
-                return "不合格   out of range " + index + "   null " + nul + "   Spine 例外 " + spineOther + "   未完了 " + giveup;
+                return Lang.T("不合格   out of range ", "FAIL   out of range ") + index + "   null " + nul + Lang.T("   Spine 例外 ", "   Spine exceptions ") + spineOther + Lang.T("   未完了 ", "   give-ups ") + giveup;
             }
             if (fired == 0 || waited == 0)
             {
-                return "判定不能   ワーカー遅延 " + fired + "   対応 " + waited + "   → もう一度 " + _keyAutoAB;
+                return Lang.T("判定不能   ワーカー遅延 ", "INCONCLUSIVE   worker stalls ") + fired + Lang.T("   対応 ", "   handled ") + waited + Lang.T("   → もう一度 ", "   \u2192 run again with ") + _keyAutoAB;
             }
-            return "合格   例外 0   ワーカー遅延 " + fired + "   対応 " + waited;
+            return Lang.T("合格   例外 0   ワーカー遅延 ", "PASS   exceptions 0   worker stalls ") + fired + Lang.T("   対応 ", "   handled ") + waited;
         }
 
         private void AbFinish(string how)
@@ -579,15 +601,15 @@ namespace LwfFpsBoost
             switch (_abPhase)
             {
                 // 通常（FullAB=false）は A しか無いので A/B の記号は出さない
-                case AbRunA: return (_abFullAB ? "A[回避処理あり] " : "負荷 ") + left;
-                case AbFinaleA: return (_abFullAB ? "A " : "") + "一斉解除";
-                case AbSettleA: return (_abFullAB ? "A " : "") + "集計 " + left;
-                case AbRest: return "休止 " + left;
-                case AbRunB: return "B[回避処理なし] " + left;
-                case AbFinaleB: return "B 一斉解除";
-                case AbSettleB: return "B 集計 " + left;
-                case AbDone: return "完了";
-                default: return "停止";
+                case AbRunA: return (_abFullAB ? Lang.T("A[回避処理あり] ", "A[guard on] ") : Lang.T("負荷 ", "load ")) + left;
+                case AbFinaleA: return (_abFullAB ? "A " : "") + Lang.T("一斉解除", "mass unregister");
+                case AbSettleA: return (_abFullAB ? "A " : "") + Lang.T("集計 ", "settle ") + left;
+                case AbRest: return Lang.T("休止 ", "rest ") + left;
+                case AbRunB: return Lang.T("B[回避処理なし] ", "B[guard off] ") + left;
+                case AbFinaleB: return Lang.T("B 一斉解除", "B mass unregister");
+                case AbSettleB: return Lang.T("B 集計 ", "B settle ") + left;
+                case AbDone: return Lang.T("完了", "done");
+                default: return Lang.T("停止", "idle");
             }
         }
 
@@ -596,7 +618,12 @@ namespace LwfFpsBoost
         // ------------------------------------------------------------------
         private void PerfStart()
         {
-            if (_abPhase != AbIdle && _abPhase != AbDone) { Say("マルチスレッド効果検証: 実行不可   高負荷テスト中"); return; }
+            if (_abPhase != AbIdle && _abPhase != AbDone)
+            {
+                Say(Lang.T("マルチスレッド効果検証: 実行不可   高負荷テスト中",
+                           "Speed test: cannot run   the load test is running"));
+                return;
+            }
             _perfSummary = "";
             if (StressTools.StallOn) { _stress.StopStall(); }
             _perfStartedChurn = false;
@@ -622,7 +649,7 @@ namespace LwfFpsBoost
             ResetStats();
             Logger.LogInfo("[perf] start: " + _stress.ChurnAlive + " skeletons, ON->OFF->ON, " + _perfPhaseSeconds + " s each"
                 + ", vsync " + _perfSavedVSync + "->0, targetFps " + _perfSavedTargetFps + "->-1");
-            Say("マルチスレッド効果検証: 開始");
+            Say(Lang.T("マルチスレッド効果検証: 開始", "Speed test: started"));
         }
 
         private void PerfTick()
@@ -661,13 +688,15 @@ namespace LwfFpsBoost
                         // 倍率は「その場の他の処理」に左右される（タイトル画面はゲーム処理が無いので高めに出る）。
                         // 場面をまたいで比べられるのは 1 フレームあたりの短縮 ms なので、そちらを主にする
                         // 画面には値だけ。「タイトルでは倍率が高めに出る」の注記は README に置く（UI 規則）
-                        _perfSummary = "1 フレーム -" + F(saved) + " ms   OFF " + F(_perfOff) + " ms → ON " + F(on) + " ms"
-                            + "   fps " + F(1000.0 / Math.Max(0.001, _perfOff)) + " → " + F(1000.0 / Math.Max(0.001, on)) + "（" + F(ratio) + " 倍）";
+                        _perfSummary = Lang.T("1 フレーム -", "per frame -") + F(saved)
+                            + " ms   OFF " + F(_perfOff) + " ms \u2192 ON " + F(on) + " ms"
+                            + "   fps " + F(1000.0 / Math.Max(0.001, _perfOff)) + " \u2192 " + F(1000.0 / Math.Max(0.001, on))
+                            + Lang.T("（", " (x") + F(ratio) + Lang.T(" 倍）", ")");
                         Logger.LogInfo("[perf] ON " + F(_perfOn1) + " / OFF " + F(_perfOff) + " / ON " + F(_perfOn2) + " ms; saved " + F(saved) + " ms/frame, x" + F(ratio));
                         GameReport.TestBlock("perf", "saved " + F(saved) + " ms/frame, x" + F(ratio), "ON " + F(_perfOn1) + " / OFF " + F(_perfOff) + " / ON " + F(_perfOn2) + " ms" + (_stress.UsingBuiltin ? " (title, builtin skeletons x" + _stress.ChurnAlive + ")" : " (in game)"));
                     }
                     PerfFinish("done");
-                    Say("マルチスレッド効果検証: 完了");
+                    Say(Lang.T("マルチスレッド効果検証: 完了", "Speed test: done"));
                     break;
             }
         }
@@ -706,8 +735,8 @@ namespace LwfFpsBoost
                 case 1: return "ON#1 " + left;
                 case 2: return "OFF " + left;
                 case 3: return "ON#2 " + left;
-                case 4: return "完了";
-                default: return "停止";
+                case 4: return Lang.T("完了", "done");
+                default: return Lang.T("停止", "idle");
             }
         }
 
@@ -716,7 +745,7 @@ namespace LwfFpsBoost
         {
             try
             {
-                if (_harmony == null) { _harmony = new Harmony(PluginGuid); }
+                if (_harmony == null) { _harmony = new Harmony(_harmonyID); }
                 _harmony.PatchAll(typeof(WorkerStallPatch));
                 _harmony.PatchAll(typeof(AnimStallPatch));
             }
@@ -759,6 +788,16 @@ namespace LwfFpsBoost
         // Assembly-CSharp に `Scene` 名前空間があるので、型のほうは完全限定で書く
         private void OnSceneLoaded(UnityEngine.SceneManagement.Scene scene, LoadSceneMode mode)
         {
+            // 言語は設定で変えられる。画面が変わるたびに引き直す
+            Lang.Refresh();
+
+            if (_upstreamFixed)
+            {
+                _inGame = IsInGameScene(scene.name);
+                _hudVisible = !_inGame || _hudOnStart.Value;
+                return;
+            }
+
             // テスト中にシーンが変わったら中止（置いたスケルトンはシーンと一緒に消えている）
             bool aborted = false;
             if (_abPhase != AbIdle && _abPhase != AbDone) { AbFinish("cancelled"); aborted = true; }
@@ -773,8 +812,10 @@ namespace LwfFpsBoost
                 if (_threadingOn) { ToggleThreading(); }
                 _locked = true;
                 GameReport.Event("test cancelled by scene change; threading disabled until restart");
-                _abortNotice = "■ " + PluginName + ": テスト中止（画面切替）   マルチスレッド: 無効   → ゲームを再起動"
-                    + (_keyToggleHud != null ? "   " + _keyToggleHud + ": 消す" : "");
+                _abortNotice = "\u25a0 " + PluginName
+                    + Lang.T(": テスト中止（画面切替）   マルチスレッド: 無効   → ゲームを再起動",
+                             ": test stopped (scene change)   threading: off   \u2192 restart the game")
+                    + (_keyToggleHud != null ? "   " + _keyToggleHud + Lang.T(": 消す", ": hide") : "");
                 Logger.LogInfo("[test] cancelled by scene change (" + scene.name + "). threading disabled, tests locked until restart");
             }
             // 表示はタイトル側だけ。ゲーム内では中止の告知だけを出す（RebuildHud 側で判断）
@@ -787,6 +828,13 @@ namespace LwfFpsBoost
                          "scene:" + scene.name);
             _skeletonCount = -1;
             if (_stress != null) { _stress.StopChurn(); }   // 置いたスケルトンはシーンと一緒に消えている
+        }
+
+        /// <summary>本体が既にマルチスレッドで回しているか。触る前の値を読む。</summary>
+        private static bool GameHasThreading()
+        {
+            try { return RuntimeSettings.UseThreadedAnimation && RuntimeSettings.UseThreadedMeshGeneration; }
+            catch (Exception) { return false; }
         }
 
         private void ApplyGlobals(bool anim, bool mesh, string reason)
@@ -852,7 +900,7 @@ namespace LwfFpsBoost
             catch (Exception e)
             {
                 Logger.LogError("[threading] toggle failed: " + e);
-                Say("マルチスレッド切替: 失敗   " + e.Message);
+                Say(Lang.T("マルチスレッド切替: 失敗   ", "Threading toggle failed   ") + e.Message);
                 return;
             }
 
@@ -863,7 +911,7 @@ namespace LwfFpsBoost
             ResetStats();
 
             Logger.LogInfo("[threading] " + (on ? "on" : "off") + " (anim " + animChanged + " / mesh " + meshChanged + " changed)");
-            Say("マルチスレッド: " + (on ? "有効" : "無効") + "   anim " + animChanged + " / mesh " + meshChanged);
+            Say(Lang.T("マルチスレッド: ", "Threading: ") + (on ? Lang.T("有効", "on") : Lang.T("無効", "off")) + "   anim " + animChanged + " / mesh " + meshChanged);
         }
 
         // ------------------------------------------------------------------
@@ -872,6 +920,16 @@ namespace LwfFpsBoost
         private void Update()
         {
             if (!_enabled.Value) { return; }
+
+            if (_upstreamFixed)
+            {
+                if (Time.unscaledTime >= _nextHudRebuild)
+                {
+                    _nextHudRebuild = Time.unscaledTime + HudInterval;
+                    RebuildHud();
+                }
+                return;
+            }
 
             RecordFrame();
             HandleInput();
@@ -920,7 +978,8 @@ namespace LwfFpsBoost
                 if ((_keyAutoAB != null && _keyAutoAB.WasPressedThisFrame(kb)) || (_keyPerfAB != null && _keyPerfAB.WasPressedThisFrame(kb)))
                 {
                     _hudVisible = true;
-                    Say("テスト: 実行不可（画面切替で中止済み）   → ゲームを再起動");
+                    Say(Lang.T("テスト: 実行不可（画面切替で中止済み）   → ゲームを再起動",
+                           "Tests are stopped until restart   \u2192 restart the game"));
                 }
                 return;
             }
@@ -943,16 +1002,16 @@ namespace LwfFpsBoost
             {
                 ResetStats();
                 RefreshSkeletonCount();
-                Say("集計: リセット");
+                Say(Lang.T("集計: リセット", "Counters reset"));
             }
             if (_keyPerfAB != null && _keyPerfAB.WasPressedThisFrame(kb))
             {
-                if (_perfPhase != 0 && _perfPhase != 4) { PerfFinish("cancelled"); Say("マルチスレッド効果検証: 中止"); }
+                if (_perfPhase != 0 && _perfPhase != 4) { PerfFinish("cancelled"); Say(Lang.T("マルチスレッド効果検証: 中止", "Speed test: stopped")); }
                 else { PerfStart(); }
             }
             if (_keyAutoAB != null && _keyAutoAB.WasPressedThisFrame(kb))
             {
-                if (_abPhase != AbIdle && _abPhase != AbDone) { AbFinish("cancelled"); Say("高負荷テスト: 中止"); }
+                if (_abPhase != AbIdle && _abPhase != AbDone) { AbFinish("cancelled"); Say(Lang.T("高負荷テスト: 中止", "Load test: stopped")); }
                 else { AbStart(); }
             }
             // Hotkey は修飾キー完全一致なので F7 単体と Alt+F7 は混ざらない
@@ -1093,17 +1152,31 @@ namespace LwfFpsBoost
                 return;
             }
 
+            if (_upstreamFixed)
+            {
+                _hudContent.text = "[" + PluginName + " " + PluginVersion + "]   "
+                    + Lang.T("本体が対応済み。この MOD は不要   → BepInEx/plugins/LwfFpsBoost.dll を削除",
+                             "The game runs Spine threaded   → delete BepInEx/plugins/LwfFpsBoost.dll");
+                return;
+            }
+
             StringBuilder sb = new StringBuilder(768);
             bool abRunning = _abPhase != AbIdle && _abPhase != AbDone;
             bool perfRunning = _perfPhase != 0 && _perfPhase != 4;
 
-            sb.AppendLine("[" + PluginName + " " + PluginVersion + "]   マルチスレッド: " + (_threadingOn ? "有効" : "無効")
-                + "   マルチスレッドエラー回避処理: " + (_waitPathPatched && LateUpdateGuard.Active ? "有効" : "無効"));
+            string on = Lang.T("有効", "on");
+            string off = Lang.T("無効", "off");
+            sb.AppendLine("[" + PluginName + " " + PluginVersion + "]"
+                + Lang.T("   マルチスレッド: ", "   threading: ") + (_threadingOn ? on : off)
+                + Lang.T("   マルチスレッドエラー回避処理: ", "   guard: ")
+                + (_waitPathPatched && LateUpdateGuard.Active ? on : off));
             if (_locked)
             {
                 // 中止後: 告知と再起動の案内だけ。テストの案内は出さない
-                sb.AppendLine("■ テスト中止（画面切替）   マルチスレッド: 無効   テスト: 再起動まで停止");
-                sb.AppendLine("   → ゲームを再起動" + (_keyToggleHud != null ? "   " + _keyToggleHud + ": 表示 OFF" : ""));
+                sb.AppendLine(Lang.T("\u25a0 テスト中止（画面切替）   マルチスレッド: 無効   テスト: 再起動まで停止",
+                                     "\u25a0 test stopped (scene change)   threading: off   tests: stopped until restart"));
+                sb.AppendLine(Lang.T("   → ゲームを再起動", "   \u2192 restart the game")
+                    + (_keyToggleHud != null ? "   " + _keyToggleHud + Lang.T(": 表示 OFF", ": hide") : ""));
                 if (Time.unscaledTime < _messageUntil && _message.Length > 0) { sb.AppendLine(">> " + _message); }
                 _hudContent.text = sb.ToString().TrimEnd('\r', '\n');   // 末尾の改行を落とさないと背景が 1 行余る
                 return;
@@ -1111,29 +1184,50 @@ namespace LwfFpsBoost
 
             if (IncidentLog.Count > 0)
             {
-                sb.AppendLine("■ エラー記録: " + IncidentLog.Count + " 件   BepInEx/" + IncidentLog.FileName + "   最初: " + Truncate(IncidentLog.First, 80));
+                sb.AppendLine(Lang.T("\u25a0 エラー記録: ", "\u25a0 incidents: ") + IncidentLog.Count
+                    + Lang.T(" 件   BepInEx/", "   BepInEx/") + IncidentLog.FileName
+                    + Lang.T("   最初: ", "   first: ") + Truncate(IncidentLog.First, 80));
             }
-            sb.AppendLine("記録: BepInEx/" + GameReport.FileName + "（1 回の工場ごとに追記）" + (IncidentLog.Count > 0 ? "   BepInEx/" + IncidentLog.FileName : ""));
+            sb.AppendLine(Lang.T("記録: BepInEx/", "log: BepInEx/") + GameReport.FileName
+                + Lang.T("（1 回の工場ごとに追記）", " (one line per factory run)")
+                + (IncidentLog.Count > 0 ? "   BepInEx/" + IncidentLog.FileName : ""));
             if (abRunning || perfRunning)
             {
-                string name = abRunning ? "高負荷テスト" : "マルチスレッド効果検証";
+                string name = abRunning ? Lang.T("高負荷テスト", "load test") : Lang.T("マルチスレッド効果検証", "speed test");
                 int left = Mathf.CeilToInt(abRunning ? AbRemaining() : PerfRemaining());
                 bool onTitle = !IsInGameScene(SceneManager.GetActiveScene().name);
-                sb.AppendLine("■ " + name + ": 実行中   残り約 " + left + " 秒   PC: 高負荷");
-                sb.AppendLine("   " + (onTitle ? "タイトル画面を移動すると中止" : "画面を切り替えると中止")
-                    + "   段階: " + (abRunning ? AbStatus() : PerfStatus())
-                    + "   " + (abRunning ? _keyAutoAB : _keyPerfAB) + ": 中止");
+                sb.AppendLine("\u25a0 " + name + Lang.T(": 実行中   残り約 ", ": running   ~") + left
+                    + Lang.T(" 秒   PC: 高負荷", " s left   CPU: heavy"));
+                sb.AppendLine("   " + (onTitle
+                        ? Lang.T("タイトル画面を移動すると中止", "leaving the title screen stops it")
+                        : Lang.T("画面を切り替えると中止", "changing scene stops it"))
+                    + Lang.T("   段階: ", "   phase: ") + (abRunning ? AbStatus() : PerfStatus())
+                    + "   " + (abRunning ? _keyAutoAB : _keyPerfAB) + Lang.T(": 中止", ": stop"));
             }
             else
             {
                 string keys = "";
-                if (_keyAutoAB != null) { keys += _keyAutoAB + ": 高負荷テスト（約 " + Mathf.CeilToInt(AbTotalSeconds()) + " 秒）   "; }
-                if (_keyPerfAB != null) { keys += _keyPerfAB + ": マルチスレッド効果検証（約 " + Mathf.CeilToInt(PerfTotalSeconds()) + " 秒）   "; }
-                if (_keyToggleHud != null) { keys += _keyToggleHud + ": 表示 OFF"; }
+                if (_keyAutoAB != null)
+                {
+                    keys += _keyAutoAB + Lang.T(": 高負荷テスト（約 ", ": load test (~") + Mathf.CeilToInt(AbTotalSeconds())
+                        + Lang.T(" 秒）   ", " s)   ");
+                }
+                if (_keyPerfAB != null)
+                {
+                    keys += _keyPerfAB + Lang.T(": マルチスレッド効果検証（約 ", ": speed test (~") + Mathf.CeilToInt(PerfTotalSeconds())
+                        + Lang.T(" 秒）   ", " s)   ");
+                }
+                if (_keyToggleHud != null) { keys += _keyToggleHud + Lang.T(": 表示 OFF", ": hide"); }
                 sb.AppendLine(keys);
             }
-            if (_abPhase == AbDone && _abVerdict.Length > 0) { sb.AppendLine("高負荷テスト: " + _abVerdict); }
-            if (_perfPhase == 4 && _perfSummary.Length > 0) { sb.AppendLine("マルチスレッド効果検証: " + _perfSummary); }
+            if (_abPhase == AbDone && _abVerdict.Length > 0)
+            {
+                sb.AppendLine(Lang.T("高負荷テスト: ", "load test: ") + _abVerdict);
+            }
+            if (_perfPhase == 4 && _perfSummary.Length > 0)
+            {
+                sb.AppendLine(Lang.T("マルチスレッド効果検証: ", "speed test: ") + _perfSummary);
+            }
             if (Time.unscaledTime < _messageUntil && _message.Length > 0)
             {
                 sb.AppendLine(">> " + _message);
@@ -1143,28 +1237,30 @@ namespace LwfFpsBoost
             {
                 double avg = AvgMs();
                 double low = LowMs();
-                sb.AppendLine("---- 詳細   " + _keyToggleDetail + ": 閉じる ----");
-                sb.AppendLine("マルチスレッド : " + (_threadingOn ? "ON" : "OFF")
+                sb.AppendLine(Lang.T("---- 詳細   ", "---- detail   ") + _keyToggleDetail
+                    + Lang.T(": 閉じる ----", ": close ----"));
+                sb.AppendLine(Lang.T("マルチスレッド : ", "threading   : ") + (_threadingOn ? "ON" : "OFF")
                     + "   (anim=" + RuntimeSettings.UseThreadedAnimation
                     + " mesh=" + RuntimeSettings.UseThreadedMeshGeneration + ")");
-                sb.AppendLine("フレーム時間   : " + F(avg) + " ms   1%Low " + F(low) + " ms   "
+                sb.AppendLine(Lang.T("フレーム時間   : ", "frame time  : ") + F(avg) + " ms   1%Low " + F(low) + " ms   "
                     + F(avg > 0.0 ? 1000.0 / avg : 0.0) + " fps   (" + _frameMs.Count + " frames)");
                 int regR = LateUpdateGuard.RegisteredRenderers;
                 int regA = LateUpdateGuard.RegisteredAnimations;
-                sb.AppendLine("スケルトン数   : 登録 mesh " + (regR >= 0 ? regR.ToString() : "?")
+                sb.AppendLine(Lang.T("スケルトン数   : 登録 mesh ", "skeletons   : registered mesh ") + (regR >= 0 ? regR.ToString() : "?")
                     + " / anim " + (regA >= 0 ? regA.ToString() : "?")
-                    + "   シーン全体 " + (_skeletonCount >= 0 ? _skeletonCount.ToString() : "?"));
-                sb.AppendLine("LateUpdate     : "
+                    + Lang.T("   シーン全体 ", "   in scene ") + (_skeletonCount >= 0 ? _skeletonCount.ToString() : "?"));
+                sb.AppendLine(Lang.T("LateUpdate     : ", "LateUpdate  : ")
                     + (_waitPathPatched && LateUpdateGuard.Active
-                        ? "エラー回避処理あり  checked " + LateUpdateGuard.FramesChecked
+                        ? Lang.T("エラー回避処理あり  checked ", "guard on   checked ") + LateUpdateGuard.FramesChecked
                           + "   caught timeout mesh " + LateUpdateGuard.TimeoutCount + " / anim " + UpdateGuard.TimeoutCount
                           + "   giveup " + (LateUpdateGuard.GiveUpCount + UpdateGuard.GiveUpCount)
-                        : "エラー回避処理なし  (" + _waitPathReport + ")"));
-                sb.AppendLine("Unity エラー   : " + _errorCount + "   (Spine 由来 " + _spineErrorCount + ")"
-                    + (_lastError.Length > 0 ? "   最後: " + Truncate(_lastError, 90) : ""));
-                sb.AppendLine("負荷           : " + _stress.Status());
-                if (_abSummary.Length > 0) { sb.AppendLine("テスト集計     : " + _abSummary); }
-                if (_perfSummary.Length > 0) { sb.AppendLine("効果検証       : " + _perfSummary); }
+                        : Lang.T("エラー回避処理なし  (", "guard off   (") + _waitPathReport + ")"));
+                sb.AppendLine(Lang.T("Unity エラー   : ", "unity errors: ") + _errorCount
+                    + Lang.T("   (Spine 由来 ", "   (Spine ") + _spineErrorCount + ")"
+                    + (_lastError.Length > 0 ? Lang.T("   最後: ", "   last: ") + Truncate(_lastError, 90) : ""));
+                sb.AppendLine(Lang.T("負荷           : ", "stress      : ") + _stress.Status());
+                if (_abSummary.Length > 0) { sb.AppendLine(Lang.T("テスト集計     : ", "load test   : ") + _abSummary); }
+                if (_perfSummary.Length > 0) { sb.AppendLine(Lang.T("効果検証       : ", "speed test  : ") + _perfSummary); }
             }
 
             _hudContent.text = sb.ToString().TrimEnd('\r', '\n');   // 末尾の改行を落とさないと背景が 1 行余る
