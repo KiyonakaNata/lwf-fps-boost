@@ -188,8 +188,9 @@ errors: upstream_timeouts=4  incidents=0 (out_of_range=0, null=0)  unity_errors=
 
 ## 9. 分かっていないこと
 
-- `GetMix: from cannot be null` は stall（1 秒の停止）では再現できません。§2b の競合は µs の重なりで、順序を作れば確実に出る性質ではないためです。
-  v2.2.0 の直列化が効いていることの根拠は F9 の A/B（§3: lock なしで二重実行 384123、lock ありで重なり 9688 に対し 0）です。実プレイでの `contended` / `double_run` の実数はこれから集めます
+- `GetMix: from cannot be null` という**文言そのもの**はテストでは出していません。F9 で作れるのは原因（同じタスクが 2 度走る。lock なしで二重実行 384123 回）と、その直接の結果（Dictionary の重複キー・out of range）までで、
+  `GetMix` は壊れたプールがあとでトラックに残す `animation = null` から出るため、壊れてから落ちるまでに時間差があります。原因を塞いだ根拠は「lock ありで重なり 9688 回に対し二重実行 0」（§3）です
+- 実プレイでの `contended`（重なりが実際に起きた回数）と `double_run`（0 のはず）の数字はこれから集めます。分かっている原因で塞いでいないものはありません
 - 上流が直したかは `spine-unity.dll` のハッシュで追っています（0.21〜0.27 は同一 `b970de3325ff…`）
 
 ## 10. 資料
