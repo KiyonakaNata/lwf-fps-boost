@@ -51,7 +51,7 @@ $dev = $dev.Replace('](../../findings/', '](findings/').Replace('](../', '](')
 $findings = Join-Path (Split-Path -Parent $root) 'findings'          # 開発ツリー（spine_perfindings）
 if (-not (Test-Path $findings)) { $findings = Join-Path $root 'findings' }   # 公開 repo（findings が同じ階層）
 New-Item -ItemType Directory -Path (Join-Path $stage 'findings') -Force | Out-Null
-foreach ($f in @('threading-race-analysis.md','reproduction-2026-09-05.md','incident-sample-2026-09-06.log','games-sample-2026-09-06.log')) {
+foreach ($f in @('threading-race-analysis.md','reproduction-2026-09-05.md','queue-race-analysis-2026-09-10.md','incident-sample-2026-09-06.log','games-sample-2026-09-06.log')) {
     $src = Join-Path $findings $f
     if (Test-Path $src) { Copy-Item $src -Destination (Join-Path $stage "findings\$f") -Force }
 }

@@ -6,8 +6,9 @@ Mod を触る人や spine-unity の利用者にも読める形にしてありま
 ## 要旨
 
 - spine-unity 4.3（beta）の `SkeletonUpdateSystem` にあるマルチスレッド更新は、**上流が既定で有効にしている高速化パスに競合バグがあり**、ver0.25.0 で本体が踏んだ `Index was out of range` はそこから出ています。ゲーム側のコードの問題ではありません
-- 本体側の修正は 2 点で、どちらも spine-unity の再ビルドで済みます（§5）
-- この Mod は暫定の回避策です。spine-unity のコードは差し替えず、Harmony の Postfix 2 つで「見捨てる」を「待つ」に変えています（§6）
+- 穴は 2 か所です。(a) `LateUpdateAsync` が 1 秒で「見捨てて」進む高速化パス、(b) worker pool の deque に**メインが投入・ワーカーが取り出し**を同時に掛けていて、同じタスクが 2 度走ることがある（§2b）。(b) は 1 秒の停止が無くても起き、0.25.0 のもう 1 件 `GetMix: from cannot be null` はこちらです
+- 本体側の修正は 3 点で、どれも spine-unity の再ビルドで済みます（§4）
+- この Mod は暫定の回避策です。spine-unity のコードは差し替えず、Harmony の Postfix 2 つで「見捨てる」を「待つ」に変え、deque の操作 4 つを lock で直列化しています（§5）
 
 ## 1. 調べ方について
 
@@ -37,6 +38,22 @@ Mod を触る人や spine-unity の利用者にも読める形にしてありま
 
 詳細: [`../findings/threading-race-analysis.md`](findings/threading-race-analysis.md)
 
+### 2b. もう 1 つの穴 — worker pool の deque（2026-09-10）
+
+上の回避処理を 2 つとも入れた Mod v2.1.1 で、実プレイ中（見捨て 0 回）に `GetMix: from cannot be null` が出ました
+（`NewTrackEntry` ← `SetAnimation` ← `PlayerAnimationController.SetAnim` ← `PlayerInput.Update`）。
+「トラックに繋がったままの TrackEntry の `animation` が null」＝プールに返されたエントリがまだトラックにいる状態で、単一スレッドの Spine では作れません。
+
+原因は `LockFreeWorkStealingWorkerPool` です。スレッドごとの deque（Chase-Lev 型）に、**メインスレッドが `PushTop` で投入し、持ち主のワーカーが `Pop`、他のワーカーが `Steal`** で取り出します。
+deque 自身の注釈は「Push と Pop は同じスレッドから」「PushTop は他のスレッドが Push/Pop/Steal を呼ぶ前にだけ」で、pool 側の注釈もそれを認めたうえでイベントの順序に頼っています。
+ところがワーカーはタスクを終える（`updateDone.Set()`）と、そのまま `Pop` → 他の deque を `Steal` で一周しに行き、メインは `updateDone` が揃った瞬間に次のフェーズの `PushTop` を始めるので、毎フレーム重なりえます。
+重なると `Pop` / `Steal` の CAS を `PushTop` の `top = t-1` が上書きし、**取り出したはずのタスクが deque に残って 2 度走ります**。
+
+- Update 側: 同じ AnimationState を 2 スレッドが同時に `Update()` → `queue.End` が二重 → `Pool.Free` が二重 → 以後 `Obtain` が同じ TrackEntry を 2 回返す → 片方が Free されるともう片方のトラックに `animation = null` が残る → 次の `SetAnimation` / `AddEmptyAnimation` で `GetMix`。壊れてから落ちるまで時間差があるので、スタックには相手が写りません
+- LateUpdate 側: 2 度目の実行が進捗カウンタをリセットして二重加算 → メインの回収ループが担当数の 2 倍まで進んで `skeletonRenderers[r]` が範囲外。**0.25.0 と同じ位置で、こちらは 1 秒の停止が要りません**
+
+詳細と interleaving の表: [`../findings/queue-race-analysis-2026-09-10.md`](findings/queue-race-analysis-2026-09-10.md)
+
 ## 3. 再現手順
 
 自然発生を待たず、条件を作って踏ませました。鍵は 3 つが揃うことです。
@@ -54,19 +71,32 @@ Mod の高負荷テスト（タイトル画面で F9）はこれを自動で作�
 回避処理あり  見捨て 20 回 → 全部待った。例外 0
 ```
 
+§2b の deque の競合も同じ F9 で踏ませます（v2.2.0）。テスト中は先頭 4 本のワーカーの起床イベントを `Pop` のたびに立て直し、`Pop` → 全 deque を `Steal` → `Pop` … と回り続けさせるので、
+メインの `PushTop` との重なりが毎フレーム何百回になります。合否は「重なりを実際に作った（contended > 0）」かつ「同じタスクが 2 度走らなかった（double_run = 0）」です。
+
+```
+lock あり  重なり 9688 → 二重実行 0。例外 0
+lock なし  重なり 0    → 二重実行 384123。ワーカー内で Dictionary の重複キー（同じ AnimationState を 2 スレッドが同時に Apply）、一斉解除で out of range 1
+```
+
+`FullAB=true` の B は deque を壊したまま終わるので、そのあとタイトルに戻ってもワーカーから out of range が出続けます。B を回したら再起動してください。
+
 負荷だけ（CPU を詰まらせる）では 1 秒の停止を作れず、先頭側のタスクを遅らせても添字がリストの中ほどを指すだけで例外にはなりません。
 末尾側のタスクを遅らせ、目覚めたあとの加算を数十ミリ秒に引き延ばして、初めて確実に出ました。手順の細部と生ログ:
 [`../findings/reproduction-2026-09-05.md`](findings/reproduction-2026-09-05.md)
 
 ## 4. 本体側の修正案
 
-どちらも spine-unity の再ビルドで済みます（Unity プロジェクト内でソースからビルドされているはずです）。
+どれも spine-unity の再ビルドで済みます（Unity プロジェクト内でソースからビルドされているはずです）。
 
 1. `Assets/Resources/SpineRuntimeSettings.asset` の `useThreadedAnimation` / `useThreadedMeshGeneration` を true に。0.26 以降アセットは入っています
 2. spine-unity の `SkeletonUpdateSystem.cs` 45 行目 `#define DONT_WAIT_FOR_ALL_LATEUPDATE_TASKS` を無効化する
+3. `LockFreeWorkStealingWorkerPool.cs` のタスク投入をスレッド安全にする。一番小さいのは `LockFreeWorkStealingDeque.cs` の `PushTop` / `Push` / `Pop` / `Steal` を `lock (this)` で囲むこと（この Mod がやっていることと同じ）。
+   きちんと直すなら、スレッドごとに `ConcurrentQueue<Task>` を持って横取りは他の queue の `TryDequeue` にするか、`PushTop` を捨ててワーカー自身に `Push` させ、ワーカーの巡回が終わるまでメインが次を投入しないバリアを置く
 
 1 だけだと 0.25.0 と同じ例外を踏みます。2 で待機パス（全タスク投入 → 全部終わるまで待つ → メイン側の処理をまとめて実行）に戻ります。
 失うのはコメントどおり「少し」で、**アニメ更新の並列化はこの分岐と無関係なので効果は丸ごと残ります**。
+3 が無いと、停止が無くても稀に同じタスクが 2 度走り、`GetMix: from cannot be null` と `Index was out of range` の両方が出ます（§2b）。
 
 `UpdateAsync` 側のタイムアウト（`WaitForThreadUpdateTasks` の 1 秒）は上流の設計そのままですが、切れても進まない（待ち続ける）ようにするのが安全です。
 また `LateUpdateSkeletonsAsyncImpl` の catch 節で `instance.skeletonRenderers[r]` を引き直すのは、二重に落ちてスレッドが死ぬので外したほうがよいです。
@@ -80,8 +110,10 @@ spine-unity のコードは差し替えていません。Harmony の Postfix 2 �
 
 - `SkeletonUpdateSystem.LateUpdateAsync` の Postfix（`LateUpdateGuard.cs`）: 戻ってきた時点で進捗カウンタが担当数に届いていないタスクがあれば、完了イベントを待って揃うまでメインスレッドを止め（上限 10 秒）、回収し損ねた `UpdateMeshAndMaterialsToBuffers()` を呼ぶ。毎フレームの負担はタスク数ぶんの int 比較（約 120 回）
 - `SkeletonUpdateSystem.WaitForThreadUpdateTasks` の Postfix（`UpdateGuard.cs`）: 戻ってきた時点で `updateDone[t]` が立っていなければ揃うまで待つ
+- `LockFreeWorkStealingDeque.PushTop` / `Push` / `Pop` / `Steal` の Prefix（`Monitor.Enter`）＋ Finalizer（`Monitor.Exit`）（`QueueGuard.cs`・v2.2.0）: その deque インスタンスの lock で直列化する。中身のアルゴリズムはそのまま。
+  lock が塞がっていた回数（contended）と、同じタスクが走っている最中にもう一度始まった回数（double_run。`UpdateSkeletonsAsyncSplitImpl` / `UpdateSkeletonsAsyncImpl` / `LateUpdateSkeletonsAsyncImpl` の Prefix/Postfix）を数えて記録に出す。lock ありなら double_run は 0 のはず
 
-本体の private に触るのは読み出しだけです（`skeletonsLateUpdatedAtTask` / `mainThreadProcessedAtTask` / `taskPartitionsLateUpdate` / `updateDone`）。
+本体の private に触るのは読み出しだけです（`skeletonsLateUpdatedAtTask` / `mainThreadProcessedAtTask` / `taskPartitionsLateUpdate` / `updateDone`。deque は型を `workerPool` → `_taskQueues` と辿るだけで、フィールドには触りません）。
 起動時に `WaitForThreadLateUpdateTasks` が DLL に**ある**（＝待機パスでビルドされている）と分かったら Postfix は入れません。
 つまり §4 の修正が本体に入れば、この Mod は自動的に何もしなくなります。
 
@@ -96,8 +128,9 @@ cfg は `BepInEx/config/kiyonakanata.lwffpsboost.cfg`。項目は 5 つだけで
 | `1. General/Enabled` | true | false で Mod 全体を止める（BepInEx の作法。DLL を外すのと同じ） |
 | `9. Developer/ThreadedAnimation` | true | アニメ更新のマルチスレッドだけを切る。GetMix 系の不具合が出たときに、メッシュ生成側と切り分けるため |
 | `9. Developer/ThreadedMeshGeneration` | true | メッシュ生成のマルチスレッドだけを切る。同上 |
+| `9. Developer/QueueLock` | true | deque の直列化（§2b）だけを切る。切って回すと記録の `double_run` が増えるかで、競合が実在することを確かめられる。**切るとまれに落ちる**ので配布版では true |
 | `9. Developer/ShowInGame` | false | ゲーム内でも表示とキーを有効にする。ゲーム内で F9 / F10 を押すと、場面で一番アニメの多い実際のスケルトン（モモコ・使い魔）を雛形にテストが走る。工場での効果や、実際の使い魔での再現を見たいときに |
-| `9. Developer/FullAB` | false | F9 を A/B にする。A（回避処理あり）のあと B（回避処理なし）も回して、例外が出ることまで確かめる。**B ではゲームが落ちることがある**ので、配布版では false。B の例外はゲームのエラー送信にも乗るので、確認が済んだら戻す |
+| `9. Developer/FullAB` | false | F9 を A/B にする。A（回避処理あり・deque の直列化あり）のあと B（どちらも無し）も回して、例外と二重実行が出ることまで確かめる。**B ではゲームが落ちることがあり、終わったあとも壊れた deque から例外が出続ける**ので、配布版では false。B を回したら再起動する。B の例外はゲームのエラー送信にも乗るので、確認が済んだら戻す |
 
 キーは固定です。
 
@@ -141,10 +174,12 @@ threading=on  guard=on  threading_off_time=0 s
 frames=129500  avg=16.6 ms  max=412.3 ms  over33ms=1197 (0.9%)  over100ms=12
 skeletons_max: mesh=688 anim=688
 guard: lateUpdate waits=3 (total 850 ms)  update waits=1 (total 120 ms)  giveups=0
+queue: lock=on  contended=12  double_run=0
 errors: upstream_timeouts=4  incidents=0 (out_of_range=0, null=0)  unity_errors=2  spine_errors=4
 ```
 
-`guard:` の waits が「本体が見捨てた回数＝回避処理が働いた回数」、`total` がその回で止めた時間の合計です。`over100ms` と合わせると、
+`guard:` の waits が「本体が見捨てた回数＝回避処理が働いた回数」、`total` がその回で止めた時間の合計です。
+`queue:` の contended が「deque の投入と取り出しが同時に来て lock で待たせた回数」（§2b の競合が実際に開いた回数）、double_run が「同じタスクが同時に走った回数」（lock ありなら 0 のはず）です。`over100ms` と合わせると、
 どれくらいの引っかかりがどれくらいの頻度で起きているかが読めます。タイトル画面で回したテストは `==== test …` ブロックとして同じファイルに入ります。
 
 **事故の記録** `LwfFpsBoost-incidents.log`（[`IncidentLog.cs`](IncidentLog.cs)）。Spine 由来の例外・エラーが出たときだけ 1 件ずつ追記します
@@ -153,17 +188,18 @@ errors: upstream_timeouts=4  incidents=0 (out_of_range=0, null=0)  unity_errors=
 
 ## 9. 分かっていないこと
 
-- `GetMix: from cannot be null` は再現できていません。窓が数マイクロ秒で、順序を作れば確実に出る性質ではないためです。
-  回避処理はその前提条件（メインが進んでいる間にワーカーが AnimationState を触る）を消すもので、「なし」で 57 回起きた見捨てが「あり」で 0 回になっていることを根拠にしています
+- `GetMix: from cannot be null` は stall（1 秒の停止）では再現できません。§2b の競合は µs の重なりで、順序を作れば確実に出る性質ではないためです。
+  v2.2.0 の直列化が効いていることの根拠は F9 の A/B（§3: lock なしで二重実行 384123、lock ありで重なり 9688 に対し 0）です。実プレイでの `contended` / `double_run` の実数はこれから集めます
 - 上流が直したかは `spine-unity.dll` のハッシュで追っています（0.21〜0.27 は同一 `b970de3325ff…`）
 
 ## 10. 資料
 
 - [`../findings/threading-race-analysis.md`](findings/threading-race-analysis.md) … 原因の確定（上流ソースの読み・出荷 DLL の分岐の確認）
 - [`../findings/reproduction-2026-09-05.md`](findings/reproduction-2026-09-05.md) … 再現手順・A/B の生ログ・性能
-- 参照した上流ソース（spine-runtimes 4.3-beta）: [SkeletonUpdateSystem.cs](https://github.com/EsotericSoftware/spine-runtimes/blob/4.3-beta/spine-unity/Assets/Spine/Runtime/spine-unity/Threading/SkeletonUpdateSystem.cs) / [LockFreeWorkStealingWorkerPool.cs](https://github.com/EsotericSoftware/spine-runtimes/blob/4.3-beta/spine-unity/Assets/Spine/Runtime/spine-unity/Threading/LockFreeWorkStealingWorkerPool.cs)
+- [`../findings/queue-race-analysis-2026-09-10.md`](findings/queue-race-analysis-2026-09-10.md) … worker pool の deque の競合（§2b）。例外の意味・重なりの表・直し方
+- 参照した上流ソース（spine-runtimes 4.3-beta）: [SkeletonUpdateSystem.cs](https://github.com/EsotericSoftware/spine-runtimes/blob/4.3-beta/spine-unity/Assets/Spine/Runtime/spine-unity/Threading/SkeletonUpdateSystem.cs) / [LockFreeWorkStealingWorkerPool.cs](https://github.com/EsotericSoftware/spine-runtimes/blob/4.3-beta/spine-unity/Assets/Spine/Runtime/spine-unity/Threading/LockFreeWorkStealingWorkerPool.cs) / [LockFreeWorkStealingDeque.cs](https://github.com/EsotericSoftware/spine-runtimes/blob/4.3-beta/spine-unity/Assets/Spine/Runtime/spine-unity/Threading/LockFreeWorkStealingDeque.cs) / [spine-csharp AnimationState.cs](https://github.com/EsotericSoftware/spine-runtimes/blob/4.3-beta/spine-csharp/src/AnimationState.cs)（`EventQueue.Drain` と `Pool<TrackEntry>`）
 - [`../findings/incident-sample-2026-09-06.log`](findings/incident-sample-2026-09-06.log) … 事故記録の実例（テストで出したもの）
-- ソース: [`SpineThreadingMod.cs`](SpineThreadingMod.cs)（本体・表示・テスト）、[`LateUpdateGuard.cs`](LateUpdateGuard.cs) / [`UpdateGuard.cs`](UpdateGuard.cs)（回避処理）、[`StressTools.cs`](StressTools.cs) / [`BuiltinSkeleton.cs`](BuiltinSkeleton.cs)（テスト）、[`IncidentLog.cs`](IncidentLog.cs)（記録）。ビルドは `build.ps1`（csc.exe / C# 5、Assembly-CSharp には依存しない）
+- ソース: [`SpineThreadingMod.cs`](SpineThreadingMod.cs)（本体・表示・テスト）、[`LateUpdateGuard.cs`](LateUpdateGuard.cs) / [`UpdateGuard.cs`](UpdateGuard.cs)（回避処理）、[`QueueGuard.cs`](QueueGuard.cs)（deque の直列化）、[`StressTools.cs`](StressTools.cs) / [`BuiltinSkeleton.cs`](BuiltinSkeleton.cs)（テスト）、[`IncidentLog.cs`](IncidentLog.cs)（記録）。ビルドは `build.ps1`（csc.exe / C# 5、Assembly-CSharp には依存しない）
 
 ## 11. 経緯
 
@@ -172,3 +208,4 @@ errors: upstream_timeouts=4  incidents=0 (out_of_range=0, null=0)  unity_errors=
 - 2026-08-29〜30: 上流ソースを読んで原因を高速化パスと確定。「Mod では塞げない」と判断してクローズ
 - 2026-09-05（ver0.27.0）: 再現に成功。上流の待機パスの移植で回避を実証、ライセンス上配れないので Postfix に書き直し（移植版は非公開）
 - 2026-09-06: アニメ更新側にも Postfix。タイトル画面で完結するテストと事故記録を付けて配布の形に
+- 2026-09-10: v2.1.1 で見捨て 0 回のまま `GetMix: from cannot be null`。worker pool の deque にメインとワーカーが同時に触る競合（§2b）と特定し、v2.2.0 で deque の操作を lock で直列化

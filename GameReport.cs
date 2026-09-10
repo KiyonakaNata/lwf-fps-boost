@@ -65,6 +65,7 @@ namespace LwfFpsBoost
             public int maxAnim;
             public double threadingOffSeconds;
             public int base_lateWaits, base_updWaits, base_giveups, base_incidents;
+            public int base_contended, base_doubleRun;
             public long base_lateWaitMs, base_updWaitMs;
             public int base_logic, base_index, base_null, base_unity, base_spine;
             public List<string> events = new List<string>();
@@ -275,6 +276,7 @@ namespace LwfFpsBoost
             r.base_lateWaits = LateUpdateGuard.TimeoutCount; r.base_lateWaitMs = LateUpdateGuard.TotalWaitMs;
             r.base_updWaits = UpdateGuard.TimeoutCount; r.base_updWaitMs = UpdateGuard.TotalWaitMs;
             r.base_giveups = LateUpdateGuard.GiveUpCount + UpdateGuard.GiveUpCount;
+            r.base_contended = QueueGuard.Contended; r.base_doubleRun = QueueGuard.DoubleRunCount;
             r.base_incidents = IncidentLog.Count;
             r.base_logic = _logic; r.base_index = _index; r.base_null = _null; r.base_unity = _unity; r.base_spine = _spine;
             _run = r;
@@ -318,6 +320,8 @@ namespace LwfFpsBoost
                 + "  over33ms=" + r.over33 + " (" + F(r.frames > 0 ? 100.0 * r.over33 / r.frames : 0.0) + "%)  over100ms=" + r.over100);
             sb.AppendLine("skeletons_max: mesh=" + r.maxMesh + " anim=" + r.maxAnim);
             sb.AppendLine("guard: lateUpdate waits=" + lateWaits + " (total " + lateMs + " ms)  update waits=" + updWaits + " (total " + updMs + " ms)  giveups=" + giveups);
+            sb.AppendLine("queue: lock=" + (QueueGuard.Active ? "on" : "off") + "  contended=" + (QueueGuard.Contended - r.base_contended)
+                + "  double_run=" + (QueueGuard.DoubleRunCount - r.base_doubleRun));
             sb.AppendLine("errors: upstream_timeouts=" + (_logic - r.base_logic) + "  incidents=" + (IncidentLog.Count - r.base_incidents)
                 + " (out_of_range=" + (_index - r.base_index) + ", null=" + (_null - r.base_null) + ")"
                 + "  unity_errors=" + (_unity - r.base_unity) + "  spine_errors=" + (_spine - r.base_spine)

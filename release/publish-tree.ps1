@@ -2,7 +2,7 @@
 #
 #   powershell -ExecutionPolicy Bypass -File release\publish-tree.ps1 [-Dest D:\Wiki\lwf-fps-boost]
 #
-# 出すもの:  ソース 8 本・build.ps1、release\ の README.md（配布用）・DEVELOPER.md（作者向け）・img\（en\ 含む）・release.ps1・zip-README.txt・thunderstore\
+# 出すもの:  ソース 9 本・build.ps1、release\ の README.md（配布用）・DEVELOPER.md（作者向け）・img\（en\ 含む）・release.ps1・zip-README.txt・thunderstore\
 #            findings\ のうち自分で書いた md と記録の実例
 # 出さないもの:
 #   - findings\LateUpdateWaitPath-port-*.cs         … 上流コードの移植（Spine Runtimes License 上、配れない）
@@ -34,7 +34,7 @@ function CopyTo($src, $rel) {
 }
 
 # ソースとビルド
-foreach ($f in @('SpineThreadingMod.cs','LateUpdateGuard.cs','UpdateGuard.cs','IncidentLog.cs','GameReport.cs','StressTools.cs','BuiltinSkeleton.cs','Lang.cs','build.ps1')) {
+foreach ($f in @('SpineThreadingMod.cs','LateUpdateGuard.cs','UpdateGuard.cs','QueueGuard.cs','IncidentLog.cs','GameReport.cs','StressTools.cs','BuiltinSkeleton.cs','Lang.cs','build.ps1')) {
     CopyTo (Join-Path $mod $f) $f
 }
 # 文書
@@ -48,7 +48,7 @@ $devDst = Join-Path $Dest 'DEVELOPER.md'
 [System.IO.File]::WriteAllText($devDst, $dev, (New-Object System.Text.UTF8Encoding($false)))
 
 # findings（自分で書いたものだけ）
-foreach ($f in @('threading-race-analysis.md','reproduction-2026-09-05.md','incident-sample-2026-09-06.log','games-sample-2026-09-06.log')) {
+foreach ($f in @('threading-race-analysis.md','reproduction-2026-09-05.md','queue-race-analysis-2026-09-10.md','incident-sample-2026-09-06.log','games-sample-2026-09-06.log')) {
     $src = Join-Path $proj "findings\$f"
     if (Test-Path $src) { CopyTo $src "findings\$f" }
 }

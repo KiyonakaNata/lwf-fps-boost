@@ -30,6 +30,7 @@ Threaded Spine animation and mesh generation for **Lazy Witch's Factory** (teste
 
 - The PC is under heavy load during a test
 - Leaving the title screen during a test stops the test and turns threading off; restart the game
+- The `queue contended` count in the result changes every run; 0 gives INCONCLUSIVE
 - After a test that produced an error, the game shows its error screen once on the next start; close it and restart
 
 ![Load test running](https://raw.githubusercontent.com/KiyonakaNata/lwf-fps-boost/main/img/en/loadtest-running.png)

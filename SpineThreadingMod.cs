@@ -155,11 +155,12 @@ namespace LwfFpsBoost
         /// 引き直しの値を使う。</summary>
         private readonly string _harmonyID = PluginGuid + "." + Guid.NewGuid().ToString("N").Substring(0, 8);
         public const string PluginName = "LWF FPS Boost";
-        public const string PluginVersion = "2.1.1";
+        public const string PluginVersion = "2.2.0";
 
         private ConfigEntry<bool> _enabled;
         private ConfigEntry<bool> _threadedAnimation;
         private ConfigEntry<bool> _threadedMeshGeneration;
+        private ConfigEntry<bool> _queueLock;          // タスクキューの直列化（QueueGuard.cs）。切るのは切り分け用
 
         // ---- 負荷テスト（検証用）----
         private StressTools _stress;
@@ -263,6 +264,7 @@ namespace LwfFpsBoost
             const string Dev = "9. Developer";
             _threadedAnimation = Config.Bind(Dev, "ThreadedAnimation", true, "");
             _threadedMeshGeneration = Config.Bind(Dev, "ThreadedMeshGeneration", true, "");
+            _queueLock = Config.Bind(Dev, "QueueLock", true, "");
             _hudOnStart = Config.Bind(Dev, "ShowInGame", false, "");
             _abFullAB = Config.Bind(Dev, "FullAB", false, "true = also run with guard off (may crash the game)").Value;
 
@@ -322,6 +324,7 @@ namespace LwfFpsBoost
             StressTools.MainThreadId = Thread.CurrentThread.ManagedThreadId;
 
             InstallWaitPath();
+            InstallQueueLock();
             InstallStallPatch();
 
             ApplyGlobals(_threadedAnimation.Value, _threadedMeshGeneration.Value, "boot");
@@ -333,6 +336,7 @@ namespace LwfFpsBoost
 
             Logger.LogInfo("[boot] " + PluginName + " " + PluginVersion
                 + "  guard=" + (_waitPathPatched ? "on" : "off")
+                + "  queue=" + (QueueGuard.Active ? "lock" : "off")
                 + "  keys: " + _keyAutoAB + "=load test, " + _keyPerfAB + "=perf test (title screen only)");
         }
 
@@ -358,6 +362,7 @@ namespace LwfFpsBoost
             if (_stress != null) { _stress.StopAll(); }
             // ScriptEngine で読み直したときに二重に当たらないように外す
             LateUpdateGuard.Active = false;
+            QueueGuard.Active = false;
             if (_harmony != null)
             {
                 try { _harmony.UnpatchSelf(); }
@@ -406,6 +411,35 @@ namespace LwfFpsBoost
         }
 
         // ------------------------------------------------------------------
+        // タスクキューの直列化（QueueGuard.cs）
+        //   見捨てとは別の穴。回避処理（Postfix 2 つ）が入らなくても当てる
+        // ------------------------------------------------------------------
+        private bool _queueLockPatched;   // deque の直列化が当たっている（テストの A で ON、B で OFF に切り替える）
+
+        private void InstallQueueLock()
+        {
+            string report;
+            if (!QueueGuard.Prepare(out report))
+            {
+                Logger.LogWarning("[queue] " + report);
+                return;
+            }
+            if (!_queueLock.Value) { Logger.LogInfo("[queue] QueueLock=false, lock left off (detector and spin still installed)"); }
+            try
+            {
+                if (_harmony == null) { _harmony = new Harmony(_harmonyID); }
+                string result = QueueGuard.Install(_harmony, _queueLock.Value);
+                _queueLockPatched = _queueLock.Value;
+                Logger.LogInfo("[queue] " + result + ". " + report);
+            }
+            catch (Exception e)
+            {
+                QueueGuard.Active = false;
+                Logger.LogError("[queue] Harmony patch failed: " + e);
+            }
+        }
+
+        // ------------------------------------------------------------------
         // 自動 A/B
         //   run   : churn + 周期 stall を PhaseSeconds 回す
         //   finale: stall を1発だけ撃ち、ワーカーが眠っている 1.2 秒の内側で churn を止めて全部を一斉に登録解除する
@@ -438,6 +472,8 @@ namespace LwfFpsBoost
         private bool AbBeginRun(bool waitPath)
         {
             LateUpdateGuard.Active = waitPath;
+            QueueGuard.Active = waitPath && _queueLockPatched;   // B は deque の直列化も切る（double_run が実際に増えることを見せる）
+            QueueGuard.SpinWorkers = true;                        // ワーカーを deque の巡回に張り付かせ、PushTop との重なりを毎フレーム作る
             IncidentLog.GuardOn = waitPath;
             IncidentLog.TestPhase = waitPath ? "load test A (guard on)" : "load test B (guard off)";
             IncidentLog.Note(waitPath ? "test: A start (guard on)" : "test: B start (guard off)");
@@ -474,7 +510,10 @@ namespace LwfFpsBoost
             _abBaseLogic = _logicErrorCount;
             _abBaseIndex = _indexErrorCount;
             _abBaseStall = StressTools.StallFired;
+            _abBaseContended = QueueGuard.Contended;
+            _abBaseDoubleRun = QueueGuard.DoubleRunCount;
         }
+        private int _abBaseContended, _abBaseDoubleRun;
 
         private string AbDelta(string label)
         {
@@ -486,6 +525,8 @@ namespace LwfFpsBoost
                 + " / null (GetMix) " + (_nullErrorCount - _abBaseNull)
                 + " / spine errors " + (_spineErrorCount - _abBaseSpineErr)
                 + " / give-ups " + (LateUpdateGuard.GiveUpCount + UpdateGuard.GiveUpCount - _abBaseWorkerExc)
+                + " / queue contended " + (QueueGuard.Contended - _abBaseContended)
+                + " / double-run " + (QueueGuard.DoubleRunCount - _abBaseDoubleRun)
                 + "  " + F(AvgMs()) + " ms";
         }
 
@@ -545,7 +586,9 @@ namespace LwfFpsBoost
                         Logger.LogInfo("[test] " + b);
                         AbFinish("done");
                         int bNull = _nullErrorCount - _abBaseNull;
-                        _abVerdict = Lang.T("あり: ", "guard on: ") + _abVerdictA + Lang.T("   なし: out of range ", "   guard off: out of range ") + bIndex + "   null " + bNull;
+                        int bDouble = QueueGuard.DoubleRunCount - _abBaseDoubleRun;
+                        _abVerdict = Lang.T("あり: ", "guard on: ") + _abVerdictA + Lang.T("   なし: out of range ", "   guard off: out of range ") + bIndex + "   null " + bNull
+                            + Lang.T("   二重実行 ", "   double-run ") + bDouble;
                         _abSummary = _abResultA + "\n                 " + b
                             + (_lastSpineError.Length > 0 ? "\n                 last Spine error: " + Truncate(_lastSpineError, 100) : "");
                         Logger.LogInfo("[test] A/B done. last Spine error: " + _lastSpineError);
@@ -571,15 +614,21 @@ namespace LwfFpsBoost
             int giveup = LateUpdateGuard.GiveUpCount + UpdateGuard.GiveUpCount - _abBaseWorkerExc;
             // 上流の "Internal threading logic error" は見捨てた事実の記録で、エラー回避処理が待てば無害。判定からは外し、Spine err からも差し引く
             int spineOther = spine - logic;
-            if (index > 0 || nul > 0 || spineOther > 0 || giveup > 0)
+            int contended = QueueGuard.Contended - _abBaseContended;
+            int doubleRun = QueueGuard.DoubleRunCount - _abBaseDoubleRun;
+            if (index > 0 || nul > 0 || spineOther > 0 || giveup > 0 || doubleRun > 0)
             {
-                return Lang.T("不合格   out of range ", "FAIL   out of range ") + index + "   null " + nul + Lang.T("   Spine 例外 ", "   Spine exceptions ") + spineOther + Lang.T("   未完了 ", "   give-ups ") + giveup;
+                return Lang.T("不合格   out of range ", "FAIL   out of range ") + index + "   null " + nul + Lang.T("   Spine 例外 ", "   Spine exceptions ") + spineOther
+                    + Lang.T("   未完了 ", "   give-ups ") + giveup + Lang.T("   二重実行 ", "   double-run ") + doubleRun;
             }
-            if (fired == 0 || waited == 0)
+            // 穴 2 つとも「実際に踏ませた」ことを条件にする。deque の重なりは lock が塞がった回数（contended）で分かる
+            if (fired == 0 || waited == 0 || (QueueGuard.Active && contended == 0))
             {
-                return Lang.T("判定不能   ワーカー遅延 ", "INCONCLUSIVE   worker stalls ") + fired + Lang.T("   対応 ", "   handled ") + waited + Lang.T("   → もう一度 ", "   \u2192 run again with ") + _keyAutoAB;
+                return Lang.T("判定不能   ワーカー遅延 ", "INCONCLUSIVE   worker stalls ") + fired + Lang.T("   対応 ", "   handled ") + waited
+                    + Lang.T("   キュー重なり ", "   queue contended ") + contended + Lang.T("   → もう一度 ", "   → run again with ") + _keyAutoAB;
             }
-            return Lang.T("合格   例外 0   ワーカー遅延 ", "PASS   exceptions 0   worker stalls ") + fired + Lang.T("   対応 ", "   handled ") + waited;
+            return Lang.T("合格   例外 0   ワーカー遅延 ", "PASS   exceptions 0   worker stalls ") + fired + Lang.T("   対応 ", "   handled ") + waited
+                + Lang.T("   キュー重なり ", "   queue contended ") + contended + Lang.T("   二重実行 0", "   double-run 0");
         }
 
         private void AbFinish(string how)
@@ -588,6 +637,8 @@ namespace LwfFpsBoost
             _stress.StallPeriodic = true;
             if (_stress.ChurnOn) { _stress.ToggleChurn(); }
             LateUpdateGuard.Active = _waitPathPatched;           // エラー回避処理を戻す
+            QueueGuard.SpinWorkers = false;
+            QueueGuard.Active = _queueLockPatched;
             IncidentLog.GuardOn = _waitPathPatched;
             IncidentLog.TestPhase = "";
             IncidentLog.Note("test: " + how);
@@ -1255,6 +1306,12 @@ namespace LwfFpsBoost
                           + "   caught timeout mesh " + LateUpdateGuard.TimeoutCount + " / anim " + UpdateGuard.TimeoutCount
                           + "   giveup " + (LateUpdateGuard.GiveUpCount + UpdateGuard.GiveUpCount)
                         : Lang.T("エラー回避処理なし  (", "guard off   (") + _waitPathReport + ")"));
+                sb.AppendLine(Lang.T("タスクキュー   : ", "task queue  : ")
+                    + (QueueGuard.Active
+                        ? Lang.T("直列化あり  重なり ", "lock on   contended ") + QueueGuard.Contended
+                        : Lang.T("直列化なし  重なり ", "lock off   contended ") + QueueGuard.Contended)
+                    + Lang.T("   二重実行 ", "   double-run ") + QueueGuard.DoubleRunCount
+                    + (QueueGuard.SpinWorkers ? Lang.T("   巡回 ", "   spin ") + QueueGuard.SpinSignals : ""));
                 sb.AppendLine(Lang.T("Unity エラー   : ", "unity errors: ") + _errorCount
                     + Lang.T("   (Spine 由来 ", "   (Spine ") + _spineErrorCount + ")"
                     + (_lastError.Length > 0 ? Lang.T("   最後: ", "   last: ") + Truncate(_lastError, 90) : ""));

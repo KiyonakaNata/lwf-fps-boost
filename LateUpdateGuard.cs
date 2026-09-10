@@ -87,6 +87,8 @@ namespace LwfFpsBoost
             }
         }
         private static SkeletonUpdateSystem _owner;
+        /// <summary>本体のインスタンス（最初の LateUpdateAsync で捕まえる。それまでは null）。QueueGuard の spin が pool を辿るのに使う。</summary>
+        internal static SkeletonUpdateSystem Owner { get { return _owner; } }
 
         /// <summary>
         /// 出荷 DLL が想定どおり（高速化パスでビルドされている）か確かめ、必要なリフレクションを用意する。

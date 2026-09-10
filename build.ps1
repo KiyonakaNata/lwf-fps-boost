@@ -31,6 +31,7 @@ $sources = @(
     (Join-Path $here 'SpineThreadingMod.cs'),   # プラグイン本体（フラグ・切替・HUD）
     (Join-Path $here 'LateUpdateGuard.cs'),     # LateUpdateAsync のエラー回避処理（Harmony Postfix）
     (Join-Path $here 'UpdateGuard.cs'),         # UpdateAsync 側（WaitForThreadUpdateTasks）のエラー回避処理
+    (Join-Path $here 'QueueGuard.cs'),          # タスクキューの直列化（deque の PushTop/Pop/Steal を lock で囲む）
     (Join-Path $here 'IncidentLog.cs'),         # 事故の記録（BepInEx/LwfFpsBoost-incidents.log に追記）
     (Join-Path $here 'GameReport.cs'),          # 1 回の工場ごとの記録（BepInEx/LwfFpsBoost-games.log に追記）
     (Join-Path $here 'StressTools.cs'),         # 負荷テスト churn / stall / hog（検証用）

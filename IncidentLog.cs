@@ -162,6 +162,8 @@ namespace LwfFpsBoost
             sb.AppendLine("guard: lateUpdate waits=" + LateUpdateGuard.TimeoutCount + " giveups=" + LateUpdateGuard.GiveUpCount
                 + "  update waits=" + UpdateGuard.TimeoutCount + " giveups=" + UpdateGuard.GiveUpCount
                 + "  registered mesh=" + LateUpdateGuard.RegisteredRenderers + " anim=" + LateUpdateGuard.RegisteredAnimations);
+            sb.AppendLine("queue: lock=" + (QueueGuard.Active ? "on" : "off") + " contended=" + QueueGuard.Contended
+                + " double_run=" + QueueGuard.DoubleRunCount);
             sb.AppendLine("-- context (oldest first)");
             lock (Lock)
             {
